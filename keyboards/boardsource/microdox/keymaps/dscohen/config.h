@@ -65,17 +65,17 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 #define MOUSEKEY_DELAY 20
 
-#define MOUSEKEY_TIME_TO_MAX 50
+#define MOUSEKEY_TIME_TO_MAX 40
 
-#define MOUSEKEY_MAX_SPEED 8
+#define MOUSEKEY_MAX_SPEED 7
 
 #define MOUSEKEY_WHEEL_DELAY 0
 
-#define COMBO_COUNT 16
-#define COMBO_TERM 35
+#define COMBO_COUNT 22
+#define COMBO_TERM 45
 
 #define TAPPING_FORCE_HOLD
-#define TAPPING_TERM 250
+#define TAPPING_TERM 200
 #define TAPPING_TERM_PER_KEY
 #define IGNORE_MOD_TAP_INTERRUPT
 #define PERMISSIVE_HOLD
