@@ -59,7 +59,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define UNUSED_PINS
 
 /* Debounce reduces chatter (unintended double-presses) - set 0 if debouncing is not needed */
-#define DEBOUNCE 15
+#define DEBOUNCE 5
 
 /* Mechanical locking support. Use KC_LCAP, KC_LNUM or KC_LSCR instead in keymap */
 #define LOCKING_SUPPORT_ENABLE
@@ -72,3 +72,21 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define SOFT_SERIAL_PIN D2
 
 #define EE_HANDS
+
+#define MOUSEKEY_DELAY 25
+#define MOUSEKEY_INTERVAL 10
+#define MOUSEKEY_MAX_SPEED 5
+#define MOUSEKEY_TIME_TO_MAX 41
+#define MOUSEKEY_WHEEL_MAX_SPEED 4
+
+
+#define ONESHOT_TIMEOUT 5000
+#define COMBO_COUNT 46
+#define COMBO_TERM 45
+
+#define TAPPING_FORCE_HOLD
+#define TAPPING_TERM 250
+#define TAPPING_TERM_PER_KEY
+#define IGNORE_MOD_TAP_INTERRUPT
+#define PERMISSIVE_HOLD
+
