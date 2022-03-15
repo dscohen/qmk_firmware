@@ -79,10 +79,10 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #define MOUSEKEY_TIME_TO_MAX 40
 #define MOUSEKEY_WHEEL_MAX_SPEED 4
 
-#define ONESHOT_TAP_TOGGLE 2
+
 #define ONESHOT_TIMEOUT 5000
-#define COMBO_COUNT 34
-#define COMBO_TERM 40
+#define COMBO_COUNT 23
+#define COMBO_TERM 45
 
 #define TAPPING_FORCE_HOLD
 #define TAPPING_TERM 250
