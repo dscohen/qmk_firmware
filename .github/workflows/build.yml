@@ -1,0 +1,49 @@
+name: Build Firmware
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: qmkfm/qmk_firmware
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build left side (trackpad)
+        run: |
+          make holykeebs/spankbd:via \
+            -e USER_NAME=holykeebs \
+            -e POINTING_DEVICE=cirque35_trackpoint \
+            -e SIDE=left \
+            -j4
+
+      - name: Rename left firmware
+        run: mv holykeebs_spankbd_via.hex holykeebs_spankbd_via_left.hex
+
+      - name: Build right side (trackpoint)
+        run: |
+          make holykeebs/spankbd:via \
+            -e USER_NAME=holykeebs \
+            -e POINTING_DEVICE=cirque35_trackpoint \
+            -e SIDE=right \
+            -j4
+
+      - name: Rename right firmware
+        run: mv holykeebs_spankbd_via.hex holykeebs_spankbd_via_right.hex
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: spankbd-firmware
+          path: |
+            holykeebs_spankbd_via_left.hex
+            holykeebs_spankbd_via_right.hex
+          retention-days: 30
