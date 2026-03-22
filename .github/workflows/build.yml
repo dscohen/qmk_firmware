@@ -34,7 +34,7 @@ jobs:
             -j4
 
       - name: Rename left firmware
-        run: mv holykeebs_spankbd_via.hex holykeebs_spankbd_via_left.hex
+        run: mv holykeebs_spankbd_via.uf2 holykeebs_spankbd_via_left.uf2
 
       - name: Build right side (trackpoint)
         run: |
@@ -45,13 +45,13 @@ jobs:
             -j4
 
       - name: Rename right firmware
-        run: mv holykeebs_spankbd_via.hex holykeebs_spankbd_via_right.hex
+        run: mv holykeebs_spankbd_via.uf2 holykeebs_spankbd_via_right.uf2
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
           name: spankbd-firmware
           path: |
-            holykeebs_spankbd_via_left.hex
-            holykeebs_spankbd_via_right.hex
+            holykeebs_spankbd_via_left.uf2
+            holykeebs_spankbd_via_right.uf2
           retention-days: 30
