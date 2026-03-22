@@ -8,14 +8,20 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
-    container:
-      image: qmkfm/qmk_firmware
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Install AVR toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-avr avr-libc binutils-avr
+
+      - name: Install Python dependencies
+        run: pip3 install -r requirements.txt
 
       - name: Build left side (trackpad)
         run: |
