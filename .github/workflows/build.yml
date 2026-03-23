@@ -27,31 +27,31 @@ jobs:
 
       - name: Build left side (trackpad)
         run: |
-          make holykeebs/spankbd:via \
+          make holykeebs/spankbd:dscohen \
             -e USER_NAME=holykeebs \
             -e POINTING_DEVICE=cirque35_trackpoint \
             -e SIDE=left \
             -j4
 
       - name: Rename left firmware
-        run: mv holykeebs_spankbd_via.uf2 holykeebs_spankbd_via_left.uf2
+        run: mv holykeebs_spankbd_dscohen.uf2 holykeebs_spankbd_dscohen_left.uf2
 
       - name: Build right side (trackpoint)
         run: |
-          make holykeebs/spankbd:via \
+          make holykeebs/spankbd:dscohen \
             -e USER_NAME=holykeebs \
             -e POINTING_DEVICE=cirque35_trackpoint \
             -e SIDE=right \
             -j4
 
       - name: Rename right firmware
-        run: mv holykeebs_spankbd_via.uf2 holykeebs_spankbd_via_right.uf2
+        run: mv holykeebs_spankbd_dscohen.uf2 holykeebs_spankbd_dscohen_right.uf2
 
       - name: Upload firmware artifacts
         uses: actions/upload-artifact@v4
         with:
           name: spankbd-firmware
           path: |
-            holykeebs_spankbd_via_left.uf2
-            holykeebs_spankbd_via_right.uf2
+            holykeebs_spankbd_dscohen_left.uf2
+            holykeebs_spankbd_dscohen_right.uf2
           retention-days: 30
