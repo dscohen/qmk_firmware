@@ -1,5 +1,7 @@
 #pragma once
 
+#define DYNAMIC_KEYMAP_LAYER_COUNT 6
+
 #define COMBO_COUNT 50
 #define COMBO_TERM_PER_COMBO
 
