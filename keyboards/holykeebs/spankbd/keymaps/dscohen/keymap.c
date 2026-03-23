@@ -511,10 +511,10 @@ static void trackpoint_drift_filter(report_mouse_t *report) {
 #define TP_FACTOR        0.06f
 #define TP_SPEED_MAX    20.0f
 
-#define PAD_FACTOR       0.005f
+#define PAD_FACTOR       0.003f
 #define PAD_EXPONENT     1.5f
 #define PAD_SPEED_MIN   40.0f
-#define PAD_MAX_SCALE   10.0f
+#define PAD_MAX_SCALE    6.0f
 
 static inline float accel_low(float speed) {
     return 1.0f + TP_FACTOR * sqrtf(speed);
@@ -545,9 +545,31 @@ static void apply_pointer_acceleration(report_mouse_t *report) {
     report->y = (mouse_xy_report_t)(report->y * scale);
 }
 
+// --- Scroll accumulator ------------------------------------------------------
+// Drag-scroll converts cirque finger movement directly from 4000-CPI deltas
+// into h/v scroll values, which is far too fast without reduction.
+// Accumulate raw h/v and divide by SCROLL_DIVISOR before emitting, keeping
+// sub-divisor remainders for smooth slow-scroll feel.
+// Increase SCROLL_DIVISOR to scroll slower, decrease to scroll faster.
+#define SCROLL_DIVISOR 20
+
+static int16_t scroll_h_accum = 0;
+static int16_t scroll_v_accum = 0;
+
+static void apply_scroll_reduction(report_mouse_t *report) {
+    if (report->h == 0 && report->v == 0) return;
+    scroll_h_accum += report->h;
+    scroll_v_accum += report->v;
+    report->h = scroll_h_accum / SCROLL_DIVISOR;
+    scroll_h_accum -= report->h * SCROLL_DIVISOR;
+    report->v = scroll_v_accum / SCROLL_DIVISOR;
+    scroll_v_accum -= report->v * SCROLL_DIVISOR;
+}
+
 report_mouse_t pointing_device_task_combined_keymap(report_mouse_t report) {
     trackpoint_drift_filter(&report);
     apply_pointer_acceleration(&report);
+    apply_scroll_reduction(&report);
     return report;
 }
 
