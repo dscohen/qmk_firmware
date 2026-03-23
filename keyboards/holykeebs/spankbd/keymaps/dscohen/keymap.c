@@ -1,5 +1,6 @@
 #include QMK_KEYBOARD_H
 #include "users/holykeebs/holykeebs.h"
+#include <math.h>
 
 enum {
     _ALPHA,
@@ -52,6 +53,7 @@ enum combos {
     COMBO_TAB_FORWARD,
     COMBO_TAB_BACKWARD,
     COMBO_ESC,
+    COMBO_SEAL,
     COMBO_SK_ALT,
     COMBO_ITERM,
     COMBO_SK_CTRL,
@@ -104,6 +106,7 @@ enum combos {
 const uint16_t PROGMEM combo_tab_forward[]  = {KC_S, KC_W, COMBO_END};
 const uint16_t PROGMEM combo_tab_backward[] = {KC_T, KC_M, COMBO_END};
 const uint16_t PROGMEM combo_esc[]          = {KC_COMM, KC_DOT, COMBO_END};
+const uint16_t PROGMEM combo_seal[]         = {KC_B, KC_L, KC_D, KC_C, COMBO_END};
 const uint16_t PROGMEM combo_sk_alt[]       = {KC_L, KC_D, COMBO_END};
 const uint16_t PROGMEM combo_iterm[]        = {LT(_NUMS, KC_P), KC_H, COMBO_END};
 const uint16_t PROGMEM combo_sk_ctrl[]      = {KC_X, KC_M, COMBO_END};
@@ -156,6 +159,7 @@ combo_t key_combos[] = {
     [COMBO_TAB_FORWARD]  = COMBO(combo_tab_forward,  LCTL(KC_TAB)),
     [COMBO_TAB_BACKWARD] = COMBO(combo_tab_backward, LCTL(LSFT(KC_TAB))),
     [COMBO_ESC]          = COMBO(combo_esc,          KC_ESC),
+    [COMBO_SEAL]         = COMBO(combo_seal,         KC_SEAL),
     [COMBO_SK_ALT]       = COMBO(combo_sk_alt,       OSM(MOD_LALT)),
     [COMBO_ITERM]        = COMBO(combo_iterm,        LCTL(KC_BSLS)),
     [COMBO_SK_CTRL]      = COMBO(combo_sk_ctrl,      OSM(MOD_LCTL)),
@@ -348,7 +352,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
      *       '-----------------------'    '-----------------------'
      */
     [_ALPHA] = LAYOUT_split_3x5_3(
-        CW_TOGG,      KC_L, KC_D, KC_C, KC_V,           KC_Z,              KC_Y,   KC_O,    KC_U,   KC_LCTL,
+        KC_B,         KC_L, KC_D, KC_C, KC_V,           KC_Z,              KC_Y,   KC_O,    KC_U,   KC_LCTL,
         KC_N,         KC_R, KC_T, KC_S, LT(_NAV, KC_G), LT(_NUMS, KC_P),   KC_H,   KC_A,    KC_E,   KC_I,
         TD(DANCE_0),  KC_X, KC_M, KC_W, LT(_MOUSE, KC_J), LT(_MOUSE, KC_K), KC_F, KC_COMM, KC_DOT,  KC_QUOT,
         KC_LGUI, OSM(MOD_LSFT), KC_BSPC,                LT(_HELPER, KC_SPACE), KC_SPACE, KC_ENT
@@ -394,6 +398,104 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
         KC_TRNS, KC_TRNS, KC_TRNS,                      KC_TRNS, KC_TRNS, KC_TRNS
     ),
 };
+
+// ============================================================================
+// Pointing device
+// ============================================================================
+
+// --- Trackpoint drift filter ------------------------------------------------
+// Detects at-rest noise from the trackpoint using report timing.
+// The trackpoint occasionally emits tiny ±1 movements while idle; these
+// arrive with long inter-report intervals (>75 ms).  Continuous human input
+// or trackpad movement arrives at much shorter intervals and is left alone.
+
+#define TP_HIST_LEN        10
+#define TP_DRIFT_THRESHOLD  1   // max |value| that qualifies as drift
+
+static int16_t  tp_hist_x[TP_HIST_LEN]        = {0};
+static int16_t  tp_hist_y[TP_HIST_LEN]        = {0};
+static uint32_t tp_interval_hist[TP_HIST_LEN] = {0};
+
+static void trackpoint_drift_filter(report_mouse_t *report) {
+    for (int i = TP_HIST_LEN - 1; i > 0; i--) {
+        tp_hist_x[i]        = tp_hist_x[i - 1];
+        tp_hist_y[i]        = tp_hist_y[i - 1];
+        tp_interval_hist[i] = tp_interval_hist[i - 1];
+    }
+    tp_hist_x[0]        = report->x;
+    tp_hist_y[0]        = report->y;
+    tp_interval_hist[0] = timer_read32();
+
+    uint32_t dt = tp_interval_hist[0] - tp_interval_hist[1];
+
+    // Short interval: active human input, no filtering needed.
+    if (dt < 75) return;
+
+    // Ambiguous: pass if the previous interval was also short.
+    if (dt < 90 && tp_interval_hist[1] - tp_interval_hist[2] < 50) return;
+
+    // Long gap: definitely resting drift — zero it immediately.
+    if (dt > 150) {
+        report->x = 0;
+        report->y = 0;
+        return;
+    }
+
+    // Medium gap: suppress only if all history values are within ±1.
+    int16_t sum_x = 0, sum_y = 0;
+    for (int i = 0; i < TP_HIST_LEN; i++) {
+        if (abs(tp_hist_x[i]) <= TP_DRIFT_THRESHOLD) {
+            sum_x += tp_hist_x[i];
+        } else {
+            sum_x = 100;
+        }
+        if (abs(tp_hist_y[i]) <= TP_DRIFT_THRESHOLD) {
+            sum_y += tp_hist_y[i];
+        } else {
+            sum_y = 100;
+        }
+    }
+    if (abs(sum_x) <= TP_HIST_LEN * TP_DRIFT_THRESHOLD && abs(sum_x) > 0) report->x = 0;
+    if (abs(sum_y) <= TP_HIST_LEN * TP_DRIFT_THRESHOLD && abs(sum_y) > 0) report->y = 0;
+}
+
+// --- Apple-like trackpad acceleration ----------------------------------------
+// Power-law curve: scale = min(MAX, 1 + FACTOR * speed^EXPONENT)
+//
+// At 4000 CPI the cirque generates these approximate speeds per 10 ms report:
+//   slow deliberate  (≈5  mm/s):   speed ≈  8  →  scale ≈ 1.5×   (precision)
+//   moderate         (≈25 mm/s):   speed ≈ 40  →  scale ≈ 2.8×
+//   fast             (≈60 mm/s):   speed ≈ 95  →  scale ≈ 4.1×
+//   fast flick       (≈100 mm/s):  speed ≈ 157 →  scale ≈ 5.0×  (capped)
+//
+// The trackpoint produces speeds of 2–20 after hk's 2× multiplier, giving
+// scales of 1.2–1.8×, which feels like a gentle, natural acceleration.
+
+#define PAD_ACCEL_FACTOR   0.08f
+#define PAD_ACCEL_EXPONENT 0.8f
+#define PAD_MAX_SCALE      5.0f
+
+static void apply_apple_acceleration(report_mouse_t *report) {
+    if (report->x == 0 && report->y == 0) return;
+    float speed = sqrtf((float)(report->x * report->x + report->y * report->y));
+    float scale = 1.0f + PAD_ACCEL_FACTOR * powf(speed, PAD_ACCEL_EXPONENT);
+    if (scale > PAD_MAX_SCALE) scale = PAD_MAX_SCALE;
+    report->x = (mouse_xy_report_t)(report->x * scale);
+    report->y = (mouse_xy_report_t)(report->y * scale);
+}
+
+report_mouse_t pointing_device_task_combined_keymap(report_mouse_t report) {
+    trackpoint_drift_filter(&report);
+    apply_apple_acceleration(&report);
+    return report;
+}
+
+void keyboard_post_init_keymap(void) {
+    // Cirque 35mm trackpad (left): high CPI for precision + top-end range.
+    pointing_device_set_cpi_on_side(true, 4000);
+    // Trackpoint (right): moderate sensitivity.
+    pointing_device_set_cpi_on_side(false, 2000);
+}
 
 // ============================================================================
 // Process record
