@@ -403,90 +403,151 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 // Pointing device
 // ============================================================================
 
-// --- Trackpoint drift filter ------------------------------------------------
-// Detects at-rest noise from the trackpoint using report timing.
-// The trackpoint occasionally emits tiny ±1 movements while idle; these
-// arrive with long inter-report intervals (>75 ms).  Continuous human input
-// or trackpad movement arrives at much shorter intervals and is left alone.
+// --- Trackpoint drift filter — adaptive state machine -----------------------
+//
+// Trackpoint idle drift: sporadic low-magnitude events (raw ±1 → ±2 in the
+// combined report after holykeebs' 2× multiplier) with inconsistent direction.
+// Intentional low-speed movement is directionally sustained.
+//
+// States:
+//   RESTING  – confirmed at rest; suppress events with mag ≤ TP_DRIFT_MAG
+//   COOLING  – movement just stopped; counting down to RESTING
+//   ACTIVE   – user is moving; pass all events through
+//
+// Transitions:
+//   Any state + mag ≥ TP_ACTIVE_MAG                               → ACTIVE
+//   Any state + mag ≤ TP_DRIFT_MAG + TP_DIR_CONSISTENT same-dir  → ACTIVE
+//   ACTIVE    + mag ≤ TP_DRIFT_MAG + direction not confirmed      → COOLING
+//   COOLING   + TP_COOL_FRAMES quiet frames                       → RESTING
+//   RESTING   + quiet, inconsistent                               → stay RESTING
 
-#define TP_HIST_LEN        10
-#define TP_DRIFT_THRESHOLD  1   // max |value| that qualifies as drift
+#define TP_ACTIVE_MAG      5   // |x|+|y| ≥ this → definitely moving
+#define TP_DRIFT_MAG       2   // |x|+|y| ≤ this → candidate drift (raw ≤1 each)
+#define TP_COOL_FRAMES     6   // quiet frames before entering RESTING
+#define TP_DIR_CONSISTENT  4   // consecutive same-direction frames to wake from rest
 
-static int16_t  tp_hist_x[TP_HIST_LEN]        = {0};
-static int16_t  tp_hist_y[TP_HIST_LEN]        = {0};
-static uint32_t tp_interval_hist[TP_HIST_LEN] = {0};
+typedef enum { TP_RESTING, TP_COOLING, TP_ACTIVE } tp_state_t;
+
+static tp_state_t tp_state    = TP_RESTING;
+static uint8_t    tp_cool_ctr = 0;
+static uint8_t    tp_dir_ctr  = 0;
+static int8_t     tp_dir_x    = 0;  // last nonzero x sign
+static int8_t     tp_dir_y    = 0;  // last nonzero y sign
 
 static void trackpoint_drift_filter(report_mouse_t *report) {
-    for (int i = TP_HIST_LEN - 1; i > 0; i--) {
-        tp_hist_x[i]        = tp_hist_x[i - 1];
-        tp_hist_y[i]        = tp_hist_y[i - 1];
-        tp_interval_hist[i] = tp_interval_hist[i - 1];
+    int16_t mag = abs(report->x) + abs(report->y);
+    int8_t  sx  = (report->x > 0) ? 1 : (report->x < 0) ? -1 : 0;
+    int8_t  sy  = (report->y > 0) ? 1 : (report->y < 0) ? -1 : 0;
+
+    bool x_consistent = (sx != 0 && sx == tp_dir_x);
+    bool y_consistent = (sy != 0 && sy == tp_dir_y);
+    if (sx != 0) tp_dir_x = sx;
+    if (sy != 0) tp_dir_y = sy;
+
+    if (mag >= TP_ACTIVE_MAG) {
+        tp_state    = TP_ACTIVE;
+        tp_cool_ctr = 0;
+        tp_dir_ctr  = 0;
+    } else if (mag <= TP_DRIFT_MAG) {
+        if (x_consistent || y_consistent) {
+            tp_dir_ctr++;
+        } else {
+            tp_dir_ctr = 0;
+        }
+
+        if (tp_dir_ctr >= TP_DIR_CONSISTENT) {
+            // Sustained directional trickle: intentional slow movement.
+            tp_state    = TP_ACTIVE;
+            tp_cool_ctr = 0;
+        } else {
+            switch (tp_state) {
+                case TP_ACTIVE:
+                    tp_state    = TP_COOLING;
+                    tp_cool_ctr = 1;
+                    break;
+                case TP_COOLING:
+                    if (++tp_cool_ctr >= TP_COOL_FRAMES) {
+                        tp_state   = TP_RESTING;
+                        tp_dir_ctr = 0;
+                    }
+                    break;
+                default:
+                    break;  // RESTING stays RESTING
+            }
+        }
+    } else {
+        // Medium magnitude (between thresholds): treat as active.
+        tp_state    = TP_ACTIVE;
+        tp_cool_ctr = 0;
+        tp_dir_ctr  = 0;
     }
-    tp_hist_x[0]        = report->x;
-    tp_hist_y[0]        = report->y;
-    tp_interval_hist[0] = timer_read32();
 
-    uint32_t dt = tp_interval_hist[0] - tp_interval_hist[1];
-
-    // Short interval: active human input, no filtering needed.
-    if (dt < 75) return;
-
-    // Ambiguous: pass if the previous interval was also short.
-    if (dt < 90 && tp_interval_hist[1] - tp_interval_hist[2] < 50) return;
-
-    // Long gap: definitely resting drift — zero it immediately.
-    if (dt > 150) {
+    if (tp_state == TP_RESTING && mag <= TP_DRIFT_MAG) {
         report->x = 0;
         report->y = 0;
-        return;
     }
-
-    // Medium gap: suppress only if all history values are within ±1.
-    int16_t sum_x = 0, sum_y = 0;
-    for (int i = 0; i < TP_HIST_LEN; i++) {
-        if (abs(tp_hist_x[i]) <= TP_DRIFT_THRESHOLD) {
-            sum_x += tp_hist_x[i];
-        } else {
-            sum_x = 100;
-        }
-        if (abs(tp_hist_y[i]) <= TP_DRIFT_THRESHOLD) {
-            sum_y += tp_hist_y[i];
-        } else {
-            sum_y = 100;
-        }
-    }
-    if (abs(sum_x) <= TP_HIST_LEN * TP_DRIFT_THRESHOLD && abs(sum_x) > 0) report->x = 0;
-    if (abs(sum_y) <= TP_HIST_LEN * TP_DRIFT_THRESHOLD && abs(sum_y) > 0) report->y = 0;
 }
 
-// --- Apple-like trackpad acceleration ----------------------------------------
-// Power-law curve: scale = min(MAX, 1 + FACTOR * speed^EXPONENT)
+// --- Dual-regime pointer acceleration ----------------------------------------
 //
-// At 4000 CPI the cirque generates these approximate speeds per 10 ms report:
-//   slow deliberate  (≈5  mm/s):   speed ≈  8  →  scale ≈ 1.5×   (precision)
-//   moderate         (≈25 mm/s):   speed ≈ 40  →  scale ≈ 2.8×
-//   fast             (≈60 mm/s):   speed ≈ 95  →  scale ≈ 4.1×
-//   fast flick       (≈100 mm/s):  speed ≈ 157 →  scale ≈ 5.0×  (capped)
+// Two regimes matched to each device's speed range in the combined report
+// (holykeebs applies 2× to trackpoint, 1× to cirque before combining):
 //
-// The trackpoint produces speeds of 2–20 after hk's 2× multiplier, giving
-// scales of 1.2–1.8×, which feels like a gentle, natural acceleration.
+//   Low  (speed ≤ TP_SPEED_MAX):  gentle sqrt curve — trackpoint range.
+//     scale = 1 + TP_FACTOR * sqrt(speed)
+//
+//   High (speed ≥ PAD_SPEED_MIN): aggressive 1.5-power curve — cirque range.
+//     scale = 1 + PAD_FACTOR * speed^1.5        (hard cap at PAD_MAX_SCALE)
+//
+//   Crossover zone: smoothstep blend for a C1-continuous transition.
+//
+// Approximate output (cirque at 4000 CPI, ~8 ms reports):
+//   speed  ~2  (TP slow)           →  1.1×
+//   speed  ~8  (PAD 5 mm/s)        →  1.2×
+//   speed  ~40 (PAD comfortable)   →  2.3×
+//   speed  ~100 (PAD fast)         →  6.0×
+//   speed  ~157 (PAD full flick)   → 10.0× (capped)
 
-#define PAD_ACCEL_FACTOR   0.08f
-#define PAD_ACCEL_EXPONENT 0.8f
-#define PAD_MAX_SCALE      5.0f
+#define TP_FACTOR        0.06f
+#define TP_SPEED_MAX    20.0f
 
-static void apply_apple_acceleration(report_mouse_t *report) {
+#define PAD_FACTOR       0.005f
+#define PAD_EXPONENT     1.5f
+#define PAD_SPEED_MIN   40.0f
+#define PAD_MAX_SCALE   10.0f
+
+static inline float accel_low(float speed) {
+    return 1.0f + TP_FACTOR * sqrtf(speed);
+}
+
+static inline float accel_high(float speed) {
+    float s = 1.0f + PAD_FACTOR * powf(speed, PAD_EXPONENT);
+    return (s < PAD_MAX_SCALE) ? s : PAD_MAX_SCALE;
+}
+
+static void apply_pointer_acceleration(report_mouse_t *report) {
     if (report->x == 0 && report->y == 0) return;
     float speed = sqrtf((float)(report->x * report->x + report->y * report->y));
-    float scale = 1.0f + PAD_ACCEL_FACTOR * powf(speed, PAD_ACCEL_EXPONENT);
-    if (scale > PAD_MAX_SCALE) scale = PAD_MAX_SCALE;
+    float scale;
+
+    if (speed <= TP_SPEED_MAX) {
+        scale = accel_low(speed);
+    } else if (speed >= PAD_SPEED_MIN) {
+        scale = accel_high(speed);
+    } else {
+        // Smoothstep blend across crossover zone for C1-continuous transition.
+        float t     = (speed - TP_SPEED_MAX) / (PAD_SPEED_MIN - TP_SPEED_MAX);
+        float blend = t * t * (3.0f - 2.0f * t);
+        scale = accel_low(speed) * (1.0f - blend) + accel_high(speed) * blend;
+    }
+
     report->x = (mouse_xy_report_t)(report->x * scale);
     report->y = (mouse_xy_report_t)(report->y * scale);
 }
 
 report_mouse_t pointing_device_task_combined_keymap(report_mouse_t report) {
     trackpoint_drift_filter(&report);
-    apply_apple_acceleration(&report);
+    apply_pointer_acceleration(&report);
     return report;
 }
 
