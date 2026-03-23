@@ -437,7 +437,7 @@ static bool process_record_tmux(uint16_t keycode, keyrecord_t *record) {
     return true;
 }
 
-bool process_record_user(uint16_t keycode, keyrecord_t *record) {
+bool process_record_keymap(uint16_t keycode, keyrecord_t *record) {
     if (get_highest_layer(layer_state) == _TMUX) {
         return process_record_tmux(keycode, record);
     }
