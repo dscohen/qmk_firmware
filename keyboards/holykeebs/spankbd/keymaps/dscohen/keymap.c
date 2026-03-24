@@ -546,29 +546,26 @@ static void apply_pointer_acceleration(report_mouse_t *report) {
 }
 
 // --- Scroll pointer-lock -----------------------------------------------------
-// When the cirque switches to scroll mode (h/v becomes non-zero), the raw
-// position jumps to wherever the second finger lands, causing a cursor lurch.
-// Fix: once any scroll is seen, suppress all x/y movement until the report
-// goes completely quiet (all fields zero), which signals that every finger has
-// lifted.  This matches Apple trackpad behaviour and reuses the same "dominant
-// gesture wins" ethos as the arrow-key axis lock.
+// When a second finger touches the cirque to start scrolling, the raw
+// position jumps to the new finger location before the scroll gesture is
+// recognised, lurching the cursor.  Fix: stamp a timestamp on every scroll
+// event and suppress x/y for SCROLL_LOCK_MS after the most recent one.
+// This keeps the cursor locked for the full duration of the scroll gesture
+// (each new h/v resets the clock) plus a 20 ms tail so the frame immediately
+// after scroll ends cannot cause a jump.
 //
-// Also resets the scroll accumulator on release so partial sub-divisor counts
-// don't produce phantom scroll ticks on the next gesture.
+// Also resets the scroll accumulator once the lock expires so sub-divisor
+// remainders don't produce phantom ticks on the next gesture.
 
-static bool scroll_gesture_active = false;
+#define SCROLL_LOCK_MS 20
+
+static uint32_t scroll_last_ms = 0;
 
 static void apply_scroll_pointer_lock(report_mouse_t *report) {
-    bool scrolling = (report->h != 0 || report->v != 0);
-    bool quiet     = (report->x == 0 && report->y == 0 && report->h == 0 && report->v == 0);
-
-    if (scrolling) {
-        scroll_gesture_active = true;
-    } else if (quiet) {
-        scroll_gesture_active = false;
+    if (report->h != 0 || report->v != 0) {
+        scroll_last_ms = timer_read32();
     }
-
-    if (scroll_gesture_active) {
+    if (timer_elapsed32(scroll_last_ms) < SCROLL_LOCK_MS) {
         report->x = 0;
         report->y = 0;
     }
@@ -588,7 +585,7 @@ static int16_t scroll_v_accum = 0;
 static void apply_scroll_reduction(report_mouse_t *report) {
     if (report->h == 0 && report->v == 0) {
         // Gesture ended: drop any leftover sub-divisor counts.
-        if (!scroll_gesture_active) {
+        if (timer_elapsed32(scroll_last_ms) >= SCROLL_LOCK_MS) {
             scroll_h_accum = 0;
             scroll_v_accum = 0;
         }
