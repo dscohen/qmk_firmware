@@ -501,12 +501,13 @@ static void trackpoint_drift_filter(report_mouse_t *report) {
 //
 //   Crossover zone: smoothstep blend for a C1-continuous transition.
 //
-// Approximate output (cirque at 4000 CPI, ~8 ms reports):
-//   speed  ~2  (TP slow)           →  1.1×
-//   speed  ~8  (PAD 5 mm/s)        →  1.2×
-//   speed  ~40 (PAD comfortable)   →  2.3×
-//   speed  ~100 (PAD fast)         →  6.0×
-//   speed  ~157 (PAD full flick)   → 10.0× (capped)
+// Critically, the curve is driven by an EMA of speed rather than instantaneous
+// speed.  This prevents a single fast frame from immediately spiking the scale:
+//   • Slow/medium gesture start → EMA stays low → scale stays controlled
+//   • Sustained fast flick      → EMA climbs quickly → scale ramps to peak
+//   • EMA resets to 0 on each new gesture (after trackpoint returns to rest)
+//
+// SPEED_EMA_ALPHA = 0.25: ~4 frames (≈32 ms) to reach 63% of a speed step.
 
 #define TP_FACTOR        0.06f
 #define TP_SPEED_MAX    20.0f
@@ -515,6 +516,8 @@ static void trackpoint_drift_filter(report_mouse_t *report) {
 #define PAD_EXPONENT     1.5f
 #define PAD_SPEED_MIN   40.0f
 #define PAD_MAX_SCALE    6.0f
+
+#define SPEED_EMA_ALPHA  0.25f
 
 static inline float accel_low(float speed) {
     return 1.0f + TP_FACTOR * sqrtf(speed);
@@ -525,20 +528,28 @@ static inline float accel_high(float speed) {
     return (s < PAD_MAX_SCALE) ? s : PAD_MAX_SCALE;
 }
 
+static float pad_speed_ema = 0;
+
 static void apply_pointer_acceleration(report_mouse_t *report) {
-    if (report->x == 0 && report->y == 0) return;
+    if (report->x == 0 && report->y == 0) {
+        if (tp_state == TP_RESTING) pad_speed_ema = 0;
+        return;
+    }
+
     float speed = sqrtf((float)(report->x * report->x + report->y * report->y));
+    pad_speed_ema = pad_speed_ema * (1.0f - SPEED_EMA_ALPHA) + speed * SPEED_EMA_ALPHA;
+
+    float s = pad_speed_ema;
     float scale;
 
-    if (speed <= TP_SPEED_MAX) {
-        scale = accel_low(speed);
-    } else if (speed >= PAD_SPEED_MIN) {
-        scale = accel_high(speed);
+    if (s <= TP_SPEED_MAX) {
+        scale = accel_low(s);
+    } else if (s >= PAD_SPEED_MIN) {
+        scale = accel_high(s);
     } else {
-        // Smoothstep blend across crossover zone for C1-continuous transition.
-        float t     = (speed - TP_SPEED_MAX) / (PAD_SPEED_MIN - TP_SPEED_MAX);
+        float t     = (s - TP_SPEED_MAX) / (PAD_SPEED_MIN - TP_SPEED_MAX);
         float blend = t * t * (3.0f - 2.0f * t);
-        scale = accel_low(speed) * (1.0f - blend) + accel_high(speed) * blend;
+        scale = accel_low(s) * (1.0f - blend) + accel_high(s) * blend;
     }
 
     report->x = (mouse_xy_report_t)(report->x * scale);
