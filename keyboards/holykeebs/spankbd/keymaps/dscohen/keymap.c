@@ -652,10 +652,54 @@ static bool handle_trackpoint_arrows(report_mouse_t *report) {
     return true;
 }
 
+// --- NAV layer scroll mode (_NAV layer) --------------------------------------
+// When _NAV is active (hold G), trackpoint x/y is redirected into h/v scroll
+// instead of cursor movement.  Same momentum-based axis lock as arrow mode:
+// once the dominant scroll axis is established, the orthogonal component is
+// zeroed each frame so a vertical scroll doesn't accidentally drift sideways.
+// The resulting h/v flows into apply_scroll_accumulator + hires scroll.
+
+static float nav_scroll_avg_x = 0;
+static float nav_scroll_avg_y = 0;
+
+static void reset_nav_scroll(void) {
+    nav_scroll_avg_x = 0;
+    nav_scroll_avg_y = 0;
+}
+
+// Returns true when the report is consumed (converted to scroll).
+static bool handle_nav_scroll(report_mouse_t *report) {
+    if (!layer_state_is(_NAV)) {
+        if (nav_scroll_avg_x != 0 || nav_scroll_avg_y != 0) reset_nav_scroll();
+        return false;
+    }
+    if (report->x == 0 && report->y == 0) {
+        if (tp_state == TP_RESTING) reset_nav_scroll();
+        return false;
+    }
+
+    // Momentum-weighted direction average (reuse ARROW_MOMENTUM constant).
+    nav_scroll_avg_x = nav_scroll_avg_x * ARROW_MOMENTUM + (float)report->x * (1.0f - ARROW_MOMENTUM);
+    nav_scroll_avg_y = nav_scroll_avg_y * ARROW_MOMENTUM + (float)report->y * (1.0f - ARROW_MOMENTUM);
+
+    // Route dominant axis into scroll; suppress the other.
+    if (fabsf(nav_scroll_avg_x) > fabsf(nav_scroll_avg_y)) {
+        report->h = report->x;
+        report->v = 0;
+    } else if (fabsf(nav_scroll_avg_y) > fabsf(nav_scroll_avg_x)) {
+        report->h = 0;
+        report->v = report->y;
+    }
+
+    report->x = 0;
+    report->y = 0;
+    return true;
+}
+
 report_mouse_t pointing_device_task_combined_keymap(report_mouse_t report) {
     trackpoint_drift_filter(&report);
     apply_scroll_pointer_lock(&report);
-    if (!handle_trackpoint_arrows(&report)) {
+    if (!handle_nav_scroll(&report) && !handle_trackpoint_arrows(&report)) {
         apply_pointer_acceleration(&report);
     }
     apply_scroll_accumulator(&report);
