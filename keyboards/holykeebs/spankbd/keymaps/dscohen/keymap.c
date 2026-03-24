@@ -568,6 +568,33 @@ static void apply_scroll_pointer_lock(report_mouse_t *report) {
     }
 }
 
+// --- Scroll accumulator ------------------------------------------------------
+// Hires scroll (POINTING_DEVICE_HIRES_SCROLL_ENABLE) makes each emitted h/v
+// unit a sub-tick fraction at the host, eliminating the chunky per-event jump.
+// But it doesn't control the rate — raw CPI-scale deltas would scroll way too
+// fast.  This accumulator divides the rate: collect SCROLL_DIVISOR raw units,
+// then emit one integer unit into the hires pipeline.
+// Tune SCROLL_DIVISOR: larger = slower scroll.
+#define SCROLL_DIVISOR 20
+
+static int16_t scroll_h_accum = 0;
+static int16_t scroll_v_accum = 0;
+
+static void apply_scroll_accumulator(report_mouse_t *report) {
+    if (report->h == 0 && report->v == 0) {
+        if (timer_elapsed32(scroll_last_ms) >= SCROLL_LOCK_MS) {
+            scroll_h_accum = 0;
+            scroll_v_accum = 0;
+        }
+        return;
+    }
+    scroll_h_accum += report->h;
+    scroll_v_accum += report->v;
+    report->h = scroll_h_accum / SCROLL_DIVISOR;
+    scroll_h_accum -= report->h * SCROLL_DIVISOR;
+    report->v = scroll_v_accum / SCROLL_DIVISOR;
+    scroll_v_accum -= report->v * SCROLL_DIVISOR;
+}
 
 // --- Trackpoint arrow-key mode (_NUMS layer) ---------------------------------
 // When _NUMS is active, trackpoint movement fires arrow keys instead of moving
@@ -631,6 +658,7 @@ report_mouse_t pointing_device_task_combined_keymap(report_mouse_t report) {
     if (!handle_trackpoint_arrows(&report)) {
         apply_pointer_acceleration(&report);
     }
+    apply_scroll_accumulator(&report);
     return report;
 }
 
