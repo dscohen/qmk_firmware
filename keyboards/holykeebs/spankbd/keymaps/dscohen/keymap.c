@@ -545,6 +545,35 @@ static void apply_pointer_acceleration(report_mouse_t *report) {
     report->y = (mouse_xy_report_t)(report->y * scale);
 }
 
+// --- Scroll pointer-lock -----------------------------------------------------
+// When the cirque switches to scroll mode (h/v becomes non-zero), the raw
+// position jumps to wherever the second finger lands, causing a cursor lurch.
+// Fix: once any scroll is seen, suppress all x/y movement until the report
+// goes completely quiet (all fields zero), which signals that every finger has
+// lifted.  This matches Apple trackpad behaviour and reuses the same "dominant
+// gesture wins" ethos as the arrow-key axis lock.
+//
+// Also resets the scroll accumulator on release so partial sub-divisor counts
+// don't produce phantom scroll ticks on the next gesture.
+
+static bool scroll_gesture_active = false;
+
+static void apply_scroll_pointer_lock(report_mouse_t *report) {
+    bool scrolling = (report->h != 0 || report->v != 0);
+    bool quiet     = (report->x == 0 && report->y == 0 && report->h == 0 && report->v == 0);
+
+    if (scrolling) {
+        scroll_gesture_active = true;
+    } else if (quiet) {
+        scroll_gesture_active = false;
+    }
+
+    if (scroll_gesture_active) {
+        report->x = 0;
+        report->y = 0;
+    }
+}
+
 // --- Scroll accumulator ------------------------------------------------------
 // Drag-scroll converts cirque finger movement directly from 4000-CPI deltas
 // into h/v scroll values, which is far too fast without reduction.
@@ -557,7 +586,14 @@ static int16_t scroll_h_accum = 0;
 static int16_t scroll_v_accum = 0;
 
 static void apply_scroll_reduction(report_mouse_t *report) {
-    if (report->h == 0 && report->v == 0) return;
+    if (report->h == 0 && report->v == 0) {
+        // Gesture ended: drop any leftover sub-divisor counts.
+        if (!scroll_gesture_active) {
+            scroll_h_accum = 0;
+            scroll_v_accum = 0;
+        }
+        return;
+    }
     scroll_h_accum += report->h;
     scroll_v_accum += report->v;
     report->h = scroll_h_accum / SCROLL_DIVISOR;
@@ -624,6 +660,7 @@ static bool handle_trackpoint_arrows(report_mouse_t *report) {
 
 report_mouse_t pointing_device_task_combined_keymap(report_mouse_t report) {
     trackpoint_drift_filter(&report);
+    apply_scroll_pointer_lock(&report);
     if (!handle_trackpoint_arrows(&report)) {
         apply_pointer_acceleration(&report);
     }
