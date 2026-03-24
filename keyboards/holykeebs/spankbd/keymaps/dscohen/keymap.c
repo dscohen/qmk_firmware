@@ -554,9 +554,6 @@ static void apply_pointer_acceleration(report_mouse_t *report) {
 // (each new h/v resets the clock) plus a 20 ms tail so the frame immediately
 // after scroll ends cannot cause a jump.
 //
-// Also resets the scroll accumulator once the lock expires so sub-divisor
-// remainders don't produce phantom ticks on the next gesture.
-
 #define SCROLL_LOCK_MS 20
 
 static uint32_t scroll_last_ms = 0;
@@ -571,33 +568,6 @@ static void apply_scroll_pointer_lock(report_mouse_t *report) {
     }
 }
 
-// --- Scroll accumulator ------------------------------------------------------
-// Drag-scroll converts cirque finger movement directly from 4000-CPI deltas
-// into h/v scroll values, which is far too fast without reduction.
-// Accumulate raw h/v and divide by SCROLL_DIVISOR before emitting, keeping
-// sub-divisor remainders for smooth slow-scroll feel.
-// Increase SCROLL_DIVISOR to scroll slower, decrease to scroll faster.
-#define SCROLL_DIVISOR 28
-
-static int16_t scroll_h_accum = 0;
-static int16_t scroll_v_accum = 0;
-
-static void apply_scroll_reduction(report_mouse_t *report) {
-    if (report->h == 0 && report->v == 0) {
-        // Gesture ended: drop any leftover sub-divisor counts.
-        if (timer_elapsed32(scroll_last_ms) >= SCROLL_LOCK_MS) {
-            scroll_h_accum = 0;
-            scroll_v_accum = 0;
-        }
-        return;
-    }
-    scroll_h_accum += report->h;
-    scroll_v_accum += report->v;
-    report->h = scroll_h_accum / SCROLL_DIVISOR;
-    scroll_h_accum -= report->h * SCROLL_DIVISOR;
-    report->v = scroll_v_accum / SCROLL_DIVISOR;
-    scroll_v_accum -= report->v * SCROLL_DIVISOR;
-}
 
 // --- Trackpoint arrow-key mode (_NUMS layer) ---------------------------------
 // When _NUMS is active, trackpoint movement fires arrow keys instead of moving
@@ -661,7 +631,6 @@ report_mouse_t pointing_device_task_combined_keymap(report_mouse_t report) {
     if (!handle_trackpoint_arrows(&report)) {
         apply_pointer_acceleration(&report);
     }
-    apply_scroll_reduction(&report);
     return report;
 }
 
