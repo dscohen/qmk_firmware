@@ -341,7 +341,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 
     /* _ALPHA
      * ,------------------------------.    ,------------------------------.
-     * | CW   |  L  |  D  |  C  |  V |    |  Z  |  Y  |  O  |  U  |LCTL|
+     * |  B   |  L  |  D  |  C  |  V |    |  Z  |  Y  |  O  |  U  |LCTL|
      * |------+-----+-----+-----+----|    |-----+-----+-----+-----+------|
      * |  N   |  R  |  T  |  S  |NAV/G|    |NUMS/P|  H  |  A  |  E  |  I |
      * |------+-----+-----+-----+----|    |-----+-----+-----+-----+------|
@@ -551,7 +551,7 @@ static void apply_pointer_acceleration(report_mouse_t *report) {
 // Accumulate raw h/v and divide by SCROLL_DIVISOR before emitting, keeping
 // sub-divisor remainders for smooth slow-scroll feel.
 // Increase SCROLL_DIVISOR to scroll slower, decrease to scroll faster.
-#define SCROLL_DIVISOR 20
+#define SCROLL_DIVISOR 28
 
 static int16_t scroll_h_accum = 0;
 static int16_t scroll_v_accum = 0;
@@ -566,9 +566,67 @@ static void apply_scroll_reduction(report_mouse_t *report) {
     scroll_v_accum -= report->v * SCROLL_DIVISOR;
 }
 
+// --- Trackpoint arrow-key mode (_NUMS layer) ---------------------------------
+// When _NUMS is active, trackpoint movement fires arrow keys instead of moving
+// the mouse.  Axis is determined by a high-momentum running average so the
+// dominant axis is sticky: once moving vertically a brief horizontal flick
+// won't accidentally trigger KC_LEFT/KC_RIGHT.  Only the dominant axis
+// accumulates; the orthogonal accumulator is zeroed each frame.
+//
+// Adapted from ~/Downloads/keymap.c (ARROW_STEP/ARROW_MOMENTUM design).
+
+#define ARROW_STEP     15    // combined-report units per arrow press
+#define ARROW_MOMENTUM 0.99f // EMA decay — higher = stickier axis
+
+static float arrow_avg_x = 0;
+static float arrow_avg_y = 0;
+static int   arrow_acc_x = 0;
+static int   arrow_acc_y = 0;
+
+static void reset_arrow_mode(void) {
+    arrow_avg_x = 0; arrow_avg_y = 0;
+    arrow_acc_x = 0; arrow_acc_y = 0;
+}
+
+// Returns true when the report is consumed (converted to arrow keys).
+static bool handle_trackpoint_arrows(report_mouse_t *report) {
+    if (!layer_state_is(_NUMS)) {
+        if (arrow_avg_x != 0 || arrow_avg_y != 0) reset_arrow_mode();
+        return false;
+    }
+    if (report->x == 0 && report->y == 0) {
+        if (tp_state == TP_RESTING) reset_arrow_mode();
+        return false;
+    }
+
+    // Update momentum-weighted direction average.
+    arrow_avg_x = arrow_avg_x * ARROW_MOMENTUM + (float)report->x * (1.0f - ARROW_MOMENTUM);
+    arrow_avg_y = arrow_avg_y * ARROW_MOMENTUM + (float)report->y * (1.0f - ARROW_MOMENTUM);
+
+    // Accumulate only on the dominant axis; zero the orthogonal accumulator.
+    if (fabsf(arrow_avg_x) > fabsf(arrow_avg_y)) {
+        arrow_acc_x += report->x;
+        arrow_acc_y  = 0;
+    } else if (fabsf(arrow_avg_y) > fabsf(arrow_avg_x)) {
+        arrow_acc_x  = 0;
+        arrow_acc_y += report->y;
+    }
+
+    while (arrow_acc_x <= -ARROW_STEP) { tap_code(KC_LEFT);  arrow_acc_x += ARROW_STEP; }
+    while (arrow_acc_x >=  ARROW_STEP) { tap_code(KC_RIGHT); arrow_acc_x -= ARROW_STEP; }
+    while (arrow_acc_y <= -ARROW_STEP) { tap_code(KC_UP);    arrow_acc_y += ARROW_STEP; }
+    while (arrow_acc_y >=  ARROW_STEP) { tap_code(KC_DOWN);  arrow_acc_y -= ARROW_STEP; }
+
+    report->x = 0;
+    report->y = 0;
+    return true;
+}
+
 report_mouse_t pointing_device_task_combined_keymap(report_mouse_t report) {
     trackpoint_drift_filter(&report);
-    apply_pointer_acceleration(&report);
+    if (!handle_trackpoint_arrows(&report)) {
+        apply_pointer_acceleration(&report);
+    }
     apply_scroll_reduction(&report);
     return report;
 }
@@ -576,8 +634,8 @@ report_mouse_t pointing_device_task_combined_keymap(report_mouse_t report) {
 void keyboard_post_init_keymap(void) {
     // Cirque 35mm trackpad (left): high CPI for precision + top-end range.
     pointing_device_set_cpi_on_side(true, 4000);
-    // Trackpoint (right): moderate sensitivity.
-    pointing_device_set_cpi_on_side(false, 2000);
+    // Trackpoint (right): 75% of previous sensitivity.
+    pointing_device_set_cpi_on_side(false, 1500);
 }
 
 // ============================================================================
