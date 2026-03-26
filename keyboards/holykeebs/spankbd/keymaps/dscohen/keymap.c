@@ -586,17 +586,23 @@ static void apply_scroll_pointer_lock(report_mouse_t *report) {
 // fast.  This accumulator divides the rate: collect SCROLL_DIVISOR raw units,
 // then emit one integer unit into the hires pipeline.
 //
-// SCROLL_DEADZONE: raw h/v values with magnitude below this are discarded
-// before accumulation, so small/slow movements produce no scroll at all.
-// This prevents having to make very tiny precision movements to control
-// scroll speed — only intentional movements register.
-// Tune SCROLL_DIVISOR: larger = slower.  SCROLL_DEADZONE: larger = more
-// resistance before scrolling begins.
-#define SCROLL_DIVISOR  30
-#define SCROLL_DEADZONE  4
+// Soft curve: f(x) = x²/(|x|+k) — no hard cutoff, small movements contribute
+// sub-linearly while large movements approach linear.  Replaces the old hard
+// SCROLL_DEADZONE that caused jerky slow scrolling.
+// Tune SCROLL_DIVISOR: larger = slower.  SCROLL_SOFTNESS: larger = softer
+// onset (more damping of small movements).
+#define SCROLL_DIVISOR   25
+#define SCROLL_SOFTNESS  5.0f
 
-static int16_t scroll_h_accum = 0;
-static int16_t scroll_v_accum = 0;
+static float scroll_h_accum = 0;
+static float scroll_v_accum = 0;
+
+static float scroll_soft_curve(int16_t x) {
+    if (x == 0) return 0.0f;
+    float fx = (float)x;
+    float ax = fabsf(fx);
+    return (fx / ax) * (ax * ax) / (ax + SCROLL_SOFTNESS);
+}
 
 static void apply_scroll_accumulator(report_mouse_t *report) {
     if (report->h == 0 && report->v == 0) {
@@ -606,16 +612,14 @@ static void apply_scroll_accumulator(report_mouse_t *report) {
         }
         return;
     }
-    if (abs(report->h) < SCROLL_DEADZONE) report->h = 0;
-    if (abs(report->v) < SCROLL_DEADZONE) report->v = 0;
-    if (report->h == 0 && report->v == 0) return;
-
-    scroll_h_accum += report->h;
-    scroll_v_accum += report->v;
-    report->h = scroll_h_accum / SCROLL_DIVISOR;
-    scroll_h_accum -= report->h * SCROLL_DIVISOR;
-    report->v = scroll_v_accum / SCROLL_DIVISOR;
-    scroll_v_accum -= report->v * SCROLL_DIVISOR;
+    scroll_h_accum += scroll_soft_curve(report->h);
+    scroll_v_accum += scroll_soft_curve(report->v);
+    int16_t h_out = (int16_t)(scroll_h_accum / SCROLL_DIVISOR);
+    int16_t v_out = (int16_t)(scroll_v_accum / SCROLL_DIVISOR);
+    scroll_h_accum -= (float)h_out * SCROLL_DIVISOR;
+    scroll_v_accum -= (float)v_out * SCROLL_DIVISOR;
+    report->h = h_out;
+    report->v = v_out;
 }
 
 // --- Trackpoint arrow-key mode (_NUMS layer) ---------------------------------
