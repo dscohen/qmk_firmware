@@ -512,12 +512,12 @@ static void trackpoint_drift_filter(report_mouse_t *report) {
 #define TP_FACTOR        0.06f
 #define TP_SPEED_MAX    20.0f
 
-#define PAD_FACTOR       0.003f
+#define PAD_FACTOR       0.002f
 #define PAD_EXPONENT     1.5f
 #define PAD_SPEED_MIN   40.0f
 #define PAD_MAX_SCALE    6.0f
 
-#define SPEED_EMA_ALPHA  0.25f
+#define SPEED_EMA_ALPHA  0.15f
 
 static inline float accel_low(float speed) {
     return 1.0f + TP_FACTOR * sqrtf(speed);
