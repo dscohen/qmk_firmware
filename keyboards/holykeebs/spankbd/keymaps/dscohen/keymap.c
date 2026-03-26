@@ -585,8 +585,15 @@ static void apply_scroll_pointer_lock(report_mouse_t *report) {
 // But it doesn't control the rate — raw CPI-scale deltas would scroll way too
 // fast.  This accumulator divides the rate: collect SCROLL_DIVISOR raw units,
 // then emit one integer unit into the hires pipeline.
-// Tune SCROLL_DIVISOR: larger = slower scroll.
-#define SCROLL_DIVISOR 20
+//
+// SCROLL_DEADZONE: raw h/v values with magnitude below this are discarded
+// before accumulation, so small/slow movements produce no scroll at all.
+// This prevents having to make very tiny precision movements to control
+// scroll speed — only intentional movements register.
+// Tune SCROLL_DIVISOR: larger = slower.  SCROLL_DEADZONE: larger = more
+// resistance before scrolling begins.
+#define SCROLL_DIVISOR  30
+#define SCROLL_DEADZONE  4
 
 static int16_t scroll_h_accum = 0;
 static int16_t scroll_v_accum = 0;
@@ -599,6 +606,10 @@ static void apply_scroll_accumulator(report_mouse_t *report) {
         }
         return;
     }
+    if (abs(report->h) < SCROLL_DEADZONE) report->h = 0;
+    if (abs(report->v) < SCROLL_DEADZONE) report->v = 0;
+    if (report->h == 0 && report->v == 0) return;
+
     scroll_h_accum += report->h;
     scroll_v_accum += report->v;
     report->h = scroll_h_accum / SCROLL_DIVISOR;
